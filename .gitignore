@@ -1,0 +1,12 @@
+# Optional: ignore common Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.egg-info/
+*.egg
+*.venv/
+
+.env/
+.env
