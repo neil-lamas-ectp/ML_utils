@@ -27,7 +27,7 @@ def timeit(func):
         return result
     return wrapper
 
-@timeit
+
 def make_rel_tenor(
     df: pd.DataFrame,
     rel_tenors: list[str],
@@ -133,9 +133,9 @@ def create_new_dir(dir, base_name, extra="") -> Path:
 
     # Build new folder name
     if extra:
-        new_name = f"{base_name}_{extra}_exp_{i}"
+        new_name = f"{base_name}_{extra}_{i}"
     else:
-        new_name = f"{base_name}_exp_{i}"
+        new_name = f"{base_name}_{i}"
 
     new_path = dir / new_name
     new_path.mkdir(exist_ok=True)
@@ -264,10 +264,6 @@ def map_tenor_period(trading_days: pd.DatetimeIndex, tenor: str, margin_days_rol
         - Y1 on 22nd of April 2025 will give 01-01-2026
     """
     first_day_tenor = map_first_day_tenor(trading_days, tenor, margin_days_roll)
-
-    # print(tenor)
-    # print(first_day_tenor[-50:])
-
     series=first_day_tenor.copy()
 
     tenor_type = tenor[0].upper()
@@ -400,7 +396,7 @@ def rolling_frontward_eff_mean(
         is_ret_log: bool,
         m: int=0,
         min_win_ratio: int = 1,
-    ) -> pd.Series:
+    ) -> tuple[pd.Series, pd.Series]:
     """
     For each time t, take the n next available (non-NaN) points
     starting from the m-th next non-NaN point.
@@ -413,7 +409,13 @@ def rolling_frontward_eff_mean(
     min_win = n // min_win_ratio
 
     arr = np.asarray(series, dtype=float).flatten()
-    lookahead = np.full_like(arr, np.nan, dtype=float)
+											  
+														   
+
+    y_values = []
+    y_indices = []
+    y_estimate_values = []
+    y_estimate_indices = []
 
     # Indices of non-NaN values
     valid_idx = np.where(~np.isnan(arr))[0]
@@ -424,17 +426,41 @@ def rolling_frontward_eff_mean(
 
         # Start from m-th future non-NaN point
         start_idx = m
+
+        # Full window with n next values
         if len(future_idx) >= start_idx + 1 + min_win:
             end_idx = min(start_idx + n, len(future_idx))
             selected_idx = future_idx[start_idx:end_idx]
-            if is_ret_log:
-                lookahead[t] = np.nansum(arr[selected_idx])
-            else:
-                lookahead[t] = np.nanmean(arr[selected_idx])
-        else:
-            lookahead[t] = np.nan # not enough points
 
-    return pd.Series(lookahead, index=series.index)
+            if is_ret_log:
+                value = np.nansum(arr[selected_idx])
+            else:
+                value = np.nanmean(arr[selected_idx])
+
+            y_indices.append(series.index[t])
+            y_values.append(value)
+
+        # Filling window for the last observations where fewer than n values remain
+        else:
+            selected_idx = future_idx[start_idx:]
+
+            if len(selected_idx) > 0:
+                if is_ret_log:
+                    value = np.nansum(arr[selected_idx])
+                else:
+                    value = np.nanmean(arr[selected_idx])
+
+                y_estimate_indices.append(series.index[t])
+                y_estimate_values.append(value)
+
+    y = pd.Series(y_values, index=y_indices, dtype=float)
+    y_estimate_end = pd.Series(
+        y_estimate_values,
+        index=y_estimate_indices,
+        dtype=float,
+    )
+
+    return y, y_estimate_end
 
 
 def z_score(x):

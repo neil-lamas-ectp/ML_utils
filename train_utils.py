@@ -10,13 +10,18 @@ import torch
 from pathlib import Path
 
 
-def torch_to_series(x: torch.Tensor, dates, name=None):
-    assert len(x) == len(dates), f"x and dates must have the same length, got {len(x)} and {len(dates)}"
+def torch_to_series(
+    x: torch.Tensor,
+    dates: pd.DatetimeIndex | pd.Series | list,
+    name: str | None = None,
+) -> pd.Series:
+    assert len(x) == len(dates), (
+        f"x and dates must have the same length, got {len(x)} and {len(dates)}"
+    )
     x = x.detach().cpu().flatten().numpy()
     dates = pd.DatetimeIndex(pd.to_datetime(dates, errors="raise"))
 
     return pd.Series(x, index=dates, name=name)
-
 
 def add_config_to_plot(fig, run_config: dict):
     """ Add a comment at the bottom of the plot with config params """
@@ -461,6 +466,7 @@ def plot_val_predictions_direction(
 
 def plot_val_predictions(
         y_test, 
+        y_test_end_estimate,
         y_pred, 
         tracking_dir, 
         n_plot=None,
@@ -473,7 +479,7 @@ def plot_val_predictions(
     """
 
     # True target vs predict: first [n_plot] points (for clarity)
-    plot_pred_vs_target(y_test, y_pred, n_plot, tracking_dir)
+    plot_pred_vs_target(y_test, y_test_end_estimate, y_pred, n_plot, tracking_dir)
 
     # Scatter
     scatter_pred_real(y_test, y_pred, n_plot, tracking_dir)
@@ -482,17 +488,20 @@ def plot_val_predictions(
     plot_rel_error(y_test, y_pred, n_plot, tracking_dir)
 
 
-def plot_pred_vs_target(y_test, y_pred, n_plot, tracking_dir):
+def plot_pred_vs_target(y_test, y_test_end_estimate, y_pred, n_plot, tracking_dir):
     """
     True target vs predict.
 
     y_test and y_pred should be pandas Series with dates as index.
+    y_test_end_estimate contains the tail of the target where the full
+    target window is not available.
     Extra dates in y_pred are still plotted.
     Metrics are computed only where y_test and y_pred overlap.
     """
     dates = y_pred.index
 
     y_test_plot = y_test.reindex(dates)
+    y_test_end_estimate_plot = y_test_end_estimate.reindex(dates)
     y_pred_plot = y_pred
 
     if n_plot is None:
@@ -502,6 +511,7 @@ def plot_pred_vs_target(y_test, y_pred, n_plot, tracking_dir):
 
     dates_plot = dates[:n_plot]
     y_test_plot = y_test_plot.iloc[:n_plot]
+    y_test_end_estimate_plot = y_test_end_estimate_plot.iloc[:n_plot]
     y_pred_plot = y_pred_plot.iloc[:n_plot]
 
     common_mask = y_test_plot.notna() & y_pred_plot.notna()
@@ -511,141 +521,62 @@ def plot_pred_vs_target(y_test, y_pred, n_plot, tracking_dir):
 
     y_abs_avg = np.mean(np.abs(y_test_common))
 
-    if True:
+    fig, ax = plt.subplots(figsize=(14, 5))
 
-        fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(
+        dates_plot,
+        y_test_plot,
+        'b-',
+        label='True',
+        alpha=0.7,
+        linewidth=1,
+    )
+    ax.plot(
+        dates_plot,
+        y_test_end_estimate_plot,
+        'g-',
+        label='True end estimate',
+        alpha=0.7,
+        linewidth=1,
+    )
+    ax.plot(
+        dates_plot,
+        y_pred_plot,
+        'r-',
+        label='Predicted',
+        alpha=0.7,
+        linewidth=1,
+    )
+    ax.axhline(y=0, color='k', linestyle='--', linewidth=1, alpha=0.7)
 
-        ax.plot(
-            dates_plot,
-            y_test_plot,
-            'b-',
-            label='True',
-            alpha=0.7,
-            linewidth=1,
-        )
-        ax.plot(
-            dates_plot,
-            y_pred_plot,
-            'r-',
-            label='Predicted',
-            alpha=0.7,
-            linewidth=1,
-        )
-        ax.axhline(y=0, color='k', linestyle='--', linewidth=1, alpha=0.7)
+    mse = np.mean((y_pred_common - y_test_common) ** 2)
+    rmse = np.sqrt(mse)
+    mae = np.mean(np.abs(y_pred_common - y_test_common))
+    avg_perc_error = mae / np.mean(np.abs(y_test_common)) * 100
 
-        mse = np.mean((y_pred_common - y_test_common) ** 2)
-        rmse = np.sqrt(mse)
-        mae = np.mean(np.abs(y_pred_common - y_test_common))
-        avg_perc_error = mae / np.mean(np.abs(y_test_common)) * 100
+    ax.text(
+        0.02, 0.98,
+        f'RMSE: {rmse:.2e} ({rmse / y_abs_avg * 100:.2f}%)\nrel MAE: {avg_perc_error:.2f}%',
+        transform=ax.transAxes,
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+    )
 
-        ax.text(
-            0.02, 0.98,
-            f'RMSE: {rmse:.2e} ({rmse / y_abs_avg * 100:.2f}%)\nrel MAE: {avg_perc_error:.2f}%',
-            transform=ax.transAxes,
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
-        )
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Target')
+    ax.set_title("Prediction VS Real")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.autofmt_xdate()
 
-        ax.set_xlabel('Date')
-        ax.set_ylabel('Target')
-        ax.set_title("Prediction VS Real")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        fig.autofmt_xdate()
+    save_path = create_new_filename(
+        tracking_dir,
+        "pred_vs_true_by_sample",
+        "png",
+    )
+    fig.savefig(save_path)
 
-        save_path = create_new_filename(tracking_dir, "pred_vs_true_by_sample", "png")
-        fig.savefig(save_path)
-
-        plt.close(fig)
+    plt.close(fig)
     
-    else:
-        fig = go.Figure()
-
-        # True
-        fig.add_trace(
-            go.Scatter(
-                x=dates_plot,
-                y=y_test_plot,
-                mode="lines",
-                name="True",
-                line=dict(
-                    color="blue",
-                    width=1,
-                ),
-                opacity=0.7,
-            )
-        )
-
-        # Predicted
-        fig.add_trace(
-            go.Scatter(
-                x=dates_plot,
-                y=y_pred_plot,
-                mode="lines",
-                name="Predicted",
-                line=dict(
-                    color="red",
-                    width=1,
-                ),
-                opacity=0.7,
-            )
-        )
-
-        # Zero line
-        fig.add_hline(
-            y=0,
-            line_dash="dash",
-            line_width=1,
-            opacity=0.7,
-        )
-
-
-        # Metrics
-        mse = np.mean((y_pred_common - y_test_common) ** 2)
-        rmse = np.sqrt(mse)
-        mae = np.mean(np.abs(y_pred_common - y_test_common))
-        avg_perc_error = mae / np.mean(np.abs(y_test_common)) * 100
-
-
-        # Add metrics box
-        fig.add_annotation(
-            x=0.02,
-            y=0.98,
-            xref="paper",
-            yref="paper",
-            text=(
-                f"RMSE: {rmse:.2e} "
-                f"({rmse / y_abs_avg * 100:.2f}%)<br>"
-                f"rel MAE: {avg_perc_error:.2f}%"
-            ),
-            showarrow=False,
-            align="left",
-            bgcolor="white",
-            opacity=0.8,
-        )
-
-
-        fig.update_layout(
-            title="Prediction VS Real",
-            xaxis_title="Date",
-            yaxis_title="Target",
-            template="plotly_white",
-            height=500,
-            hovermode="x unified",
-            legend=dict(
-                x=0,
-                y=1,
-            ),
-        )
-
-
-        save_path = create_new_filename(
-            tracking_dir,
-            "pred_vs_true_by_sample",
-            "json",
-        )
-
-        pio.write_json(fig, save_path)
-
 
 def scatter_pred_real(y_test, y_pred, n_plot, tracking_dir):
     y_test, y_pred = y_test.align(y_pred, join="inner")
