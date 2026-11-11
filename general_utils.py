@@ -1,7 +1,5 @@
 import plotly.graph_objects as go
 from pathlib import Path
-from pprint import pprint
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,8 +8,8 @@ import numpy as np
 import time
 from functools import wraps
 from typing import Any
-
 from datetime import datetime
+
 
 def timeit(func):
     """Decorator to measure execution time of a function."""
@@ -58,6 +56,7 @@ def make_rel_tenor(
     )
 
     return res
+
 
 def reindex_ffill(data: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
     return data.reindex(
@@ -196,15 +195,27 @@ def map_first_day_tenor(trading_days: pd.DatetimeIndex, tenor: str, margin_days_
     n = int(tenor[1:])
     assert tenor_type in "MQY" and tenor[1:].isdigit()
     
-    trading_days_ext = trading_days.append(
-        pd.bdate_range(
+    if margin_days_roll > 0:
+        trailing_days = pd.bdate_range(
             trading_days.max() + pd.offsets.BDay(),
             periods=margin_days_roll,
         )
-    )
-    
-    days = trading_days_ext[:-margin_days_roll]
-    days_shifted = trading_days_ext[margin_days_roll:]
+        trading_days_ext = trading_days.append(trailing_days)
+        days = trading_days_ext[:-margin_days_roll]
+        days_shifted = trading_days_ext[margin_days_roll:]
+    elif margin_days_roll < 0:
+        roll_back_days = -margin_days_roll
+        leading_days = pd.bdate_range(
+            end=trading_days.min() - pd.offsets.BDay(),
+            periods=roll_back_days,
+        )
+        trading_days_ext = leading_days.append(trading_days)
+        days = trading_days_ext[roll_back_days:]
+        days_shifted = trading_days_ext[:-roll_back_days]
+    else:
+        trading_days_ext = trading_days
+        days = trading_days_ext
+        days_shifted = trading_days_ext
 
     dec_cutoff = (
         pd.Series(trading_days_ext, index=trading_days_ext)
@@ -409,9 +420,7 @@ def rolling_frontward_eff_mean(
     min_win = n // min_win_ratio
 
     arr = np.asarray(series, dtype=float).flatten()
-											  
-														   
-
+							 
     y_values = []
     y_indices = []
     y_estimate_values = []
